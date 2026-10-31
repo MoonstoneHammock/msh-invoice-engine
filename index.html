@@ -236,7 +236,7 @@ const today = () => { const d = new Date(); return d.getFullYear()+"-"+String(d.
 const clone = o => JSON.parse(JSON.stringify(o));
 const blankAddon = () => ({ desc: "", sac: SAC.FNB, sacOther: "", amount: "", rate: 18 });
 function freshData(prop){
-  return { prop, docDate: today(), bookingDate: "", taxType: "CGST",
+  return { prop, custType: "B2B", docDate: today(), bookingDate: "", taxType: "CGST",
     cust: { name: "", address: "", gstin: "" },
     acc: { sel: {}, full: false, pax: "", nights: 1, amount: "", override: "auto" },
     addons: [], cn: { origNo: "", origDate: "", reason: "Booking cancelled", reasonOther: "" } };
@@ -369,6 +369,10 @@ function editorHTML(){
 
   <section class="box">
     <h2>Customer</h2>
+    ${cn ? "" : `<div class="seg" role="group" aria-label="Customer type" style="margin-bottom:6px">
+      <button type="button" data-ctype="B2B" aria-pressed="${d.custType!=="B2C"}">B2B (company)</button>
+      <button type="button" data-ctype="B2C" aria-pressed="${d.custType==="B2C"}">B2C (individual guest)</button></div>
+    <p class="hint" style="margin:0 0 10px">${d.custType==="B2C" ? "This proforma becomes a <strong>B2C tax invoice</strong> on its own number series (like 26-27/06 N/A)." : "This proforma becomes a <strong>B2B tax invoice</strong> on the GST series (like 26-27/0025)."}</p>`}
     <div class="grid2">
       <label class="f full">Company or customer name<input data-k="cust.name" value="${esc(d.cust.name)}" autocomplete="organization"></label>
       <label class="f full">Billing address<textarea data-k="cust.address">${esc(d.cust.address)}</textarea></label>
@@ -636,7 +640,7 @@ function renderForm(){
       <button class="secondary" type="button" data-clear>Clear</button>`;
   else actions = `<button class="primary" type="button" data-save-pi id="saveBtn" ${dirty() && !BUSY ? "" : "disabled"}>${dirty() ? `Save changes as v${EDITING.v + 1}` : "No changes to save"}</button>
       <button class="secondary" type="button" data-dl-current>Download v${EDITING.v} PDF</button>
-      <button class="secondary" type="button" data-finalise ${BUSY?"disabled":""}>Generate final tax invoice</button>
+      <button class="secondary" type="button" data-finalise ${BUSY?"disabled":""}>Generate final ${S.custType==="B2C" ? "B2C" : "B2B"} tax invoice</button>
       <button class="secondary" type="button" data-close>Close</button>`;
   f.innerHTML = head + editorHTML() + `<div class="actions">${actions}<p class="msg" id="msg" role="status"></p></div>`;
   updateLive();
@@ -657,25 +661,25 @@ function viewHTML(){
   }
   const cn = V.kind === "CN";
   return `<section class="banner locked">
-    <h2>${cn ? "Credit note" : "Tax invoice"} ${esc(V.number)}</h2>
-    <p>${esc(place)} · ${esc(d.cust.name)} · issued ${esc(V.rec.issuedAt)}${V.rec.by ? " by " + esc(V.rec.by) : ""}${V.rec.fromPI ? ` from ${esc(V.rec.fromPI)}` : ""}${V.rec.against ? ` against ${esc(V.rec.against)}` : ""}. Final, so it can't be changed${cn ? "" : ". To correct it, raise a credit note"}.</p>
+    <h2>${cn ? "Credit note" : V.kind === "B2C" ? "B2C tax invoice" : "Tax invoice"} ${esc(V.number)}</h2>
+    <p>${esc(place)} · ${esc(d.cust.name)} · issued ${esc(V.rec.issuedAt)}${V.rec.by ? " by " + esc(V.rec.by) : ""}${V.rec.fromPI ? ` from ${esc(V.rec.fromPI)}` : ""}${V.rec.against ? ` against ${esc(V.rec.against)}` : ""}. Final, so it can't be changed${cn || V.kind === "B2C" ? "" : ". To correct it, raise a credit note"}.</p>
     <p style="margin-top:6px">${V.rec.drive ? `📁 Saved in Google Drive › ${esc(DRIVE_PATH(V))}` : "📁 Not saved to Google Drive yet."}</p>
     <div class="btns">
       <button class="primary" type="button" data-dl-current>Download PDF</button>
       ${V.rec.drive ? `<a class="secondary" style="text-align:center;text-decoration:none" href="${esc(V.rec.drive)}" target="_blank" rel="noopener">Open in Google Drive</a>` : `<button class="secondary" type="button" data-upload ${BUSY?"disabled":""}>Save PDF to Google Drive</button>`}
-      ${cn ? "" : `<button class="secondary" type="button" data-make-cn>Raise a credit note against this invoice</button>`}
+      ${cn || V.kind === "B2C" ? "" : `<button class="secondary" type="button" data-make-cn>Raise a credit note against this invoice</button>`}
       <button class="secondary" type="button" data-close>Close</button>
     </div><p class="msg" id="msg" role="status" style="margin-top:10px"></p></section>`;
 }
-const DRIVE_PATH = V => `MSH Tax Invoices › ${PROPS[V.prop].label}${V.kind === "CN" ? " › Credit notes" : ""}`;
+const DRIVE_PATH = V => `MSH Tax Invoices › ${PROPS[V.prop].label}${V.kind === "CN" ? " › Credit notes" : V.kind === "B2C" ? " › B2C invoices" : ""}`;
 
 /* ---------- documents panel ---------- */
 function renderDrawer(){
   const host = document.getElementById("drawerHost");
   if (!DRAWER.open){ host.innerHTML = ""; return; }
   const P = PANEL[DRAWER.prop];
-  const lists = P ? { PI: P.proformas, INV: P.invoices, CN: P.creditNotes } : null;
-  const label = { PI: "Proforma invoices", INV: "Tax invoices", CN: "Credit notes" };
+  const lists = P ? { PI: P.proformas, INV: P.invoices, B2C: P.b2c || [], CN: P.creditNotes } : null;
+  const label = { PI: "Proformas", INV: "B2B tax invoices", B2C: "B2C tax invoices", CN: "Credit notes" };
   let body;
   if (!P) body = `<div class="empty">Loading ${PROPS[DRAWER.prop].label}…</div>`;
   else if (P.error) body = `<div class="empty" style="color:var(--danger)">${esc(P.error)}</div>`;
@@ -691,7 +695,7 @@ function renderDrawer(){
       <div class="chips">${Object.keys(PROPS).map(k => `<button class="chip" type="button" data-dprop="${k}" aria-pressed="${DRAWER.prop===k}">${PROPS[k].label}</button>`).join("")}
         <button class="chip" type="button" data-refresh style="margin-left:auto">↻ Refresh</button></div>
       <div class="seg" role="group" aria-label="Document type">
-        ${["PI","INV","CN"].map(k => `<button type="button" data-dtype="${k}" aria-pressed="${DRAWER.type===k}">${label[k]}${lists ? ` (${lists[k].length})` : ""}</button>`).join("")}</div>
+        ${["PI","INV","B2C","CN"].map(k => `<button type="button" data-dtype="${k}" aria-pressed="${DRAWER.type===k}">${label[k]}${lists ? ` (${lists[k].length})` : ""}</button>`).join("")}</div>
       ${P && !P.error ? `<div style="display:flex;gap:14px;font-size:12px"><a href="${esc(P.sheetUrl)}" target="_blank" rel="noopener">Open the Google Sheet</a><a href="${esc(P.driveUrl)}" target="_blank" rel="noopener">Open ${PROPS[DRAWER.prop].label} Drive folder</a></div>` : ""}
     </div>
     <div class="body">${body}</div>
@@ -708,7 +712,7 @@ function cardHTML(x, type){
     </div>`;
   }
   return `<div class="card">
-    <div class="row1"><div><span class="tag ${type === "CN" ? "cn" : "inv"}">${type === "CN" ? "Credit note" : "Tax invoice"}</span><span class="no">${esc(x.number)}</span></div><span class="amt">${amt}</span></div>
+    <div class="row1"><div><span class="tag ${type === "CN" ? "cn" : "inv"}">${type === "CN" ? "Credit note" : type === "B2C" ? "B2C tax invoice" : "B2B tax invoice"}</span><span class="no">${esc(x.number)}</span></div><span class="amt">${amt}</span></div>
     <div class="sub">${esc(x.cust)} · ${esc(x.issuedAt)}${x.link ? " · " + esc(x.link) : ""}</div>
     <div class="acts"><button type="button" data-open="${type}" data-no="${esc(x.number)}">Open</button>${x.drive ? `<a href="${esc(x.drive)}" target="_blank" rel="noopener" style="font-size:12px;align-self:center">Open in Drive</a>` : `<span class="sub" style="align-self:center">Not in Drive yet</span>`}</div>
   </div>`;
@@ -735,15 +739,15 @@ async function savePI(){
 }
 async function finalise(){
   if (dirty()){ say(`You have unsaved changes. Save them as v${EDITING.v + 1} first, so the tax invoice matches a saved version.`, "bad"); return; }
-  const no = peekNo("INV", EDITING.prop, today());
-  if (!await ask("Generate the final tax invoice?", `It's made from <strong>${esc(EDITING.number)} v${EDITING.v}</strong>, dated today and numbered ${esc(no)} (or the next free number). It can't be changed afterwards, the proforma is locked, and the PDF is saved to Google Drive.`, "Generate tax invoice")) return;
+  const fk = S.custType === "B2C" ? "B2C" : "INV", no = peekNo(fk, EDITING.prop, today());
+  if (!await ask(`Generate the final ${fk === "B2C" ? "B2C" : "B2B"} tax invoice?`, `It's made from <strong>${esc(EDITING.number)} v${EDITING.v}</strong>, dated today and numbered ${esc(no)} (or the next free number). It can't be changed afterwards, the proforma is locked, and the PDF is saved to Google Drive.`, "Generate tax invoice")) return;
   BUSY = true; renderForm(); say("Generating the tax invoice…");
   try {
     const r = await api("finalise", { prop: EDITING.prop, number: EDITING.number, expectedV: EDITING.v });
     NEXT[fyOf(r.record.data.docDate)] = r.next; delete PANEL[EDITING.prop];
-    VIEW = { kind: "INV", prop: EDITING.prop, number: r.record.number, rec: r.record };
+    VIEW = { kind: r.record.kind || "INV", prop: EDITING.prop, number: r.record.number, rec: r.record };
     EDITING = null; BUSY = false; renderForm();
-    await uploadCurrent(`Tax invoice ${r.record.number} generated.`);
+    await uploadCurrent(`${r.record.kind === "B2C" ? "B2C tax" : "Tax"} invoice ${r.record.number} generated.`);
   } catch(e){ BUSY = false; renderForm(); say(e.message, "bad"); }
 }
 async function issueCN(){
@@ -874,6 +878,7 @@ document.addEventListener("click", e => {
   else if (d.mode){ if (MODE !== d.mode){ MODE = d.mode; S = freshData(S.prop); renderForm(); } }
   else if (d.prop){ if (S.prop !== d.prop){ S.prop = d.prop; S.acc.sel = {}; renderForm(); } }
   else if (d.tax){ S.taxType = d.tax; renderForm(); }
+  else if (d.ctype){ if (S.custType !== d.ctype){ S.custType = d.ctype; renderForm(); } }
   else if (b.hasAttribute("data-add-addon")){ S.addons.push(blankAddon()); renderForm(); }
   else if (d.delAddon !== undefined){ S.addons.splice(+d.delAddon, 1); renderForm(); }
   else if (b.hasAttribute("data-save-pi")) savePI();
@@ -882,7 +887,7 @@ document.addEventListener("click", e => {
   else if (b.hasAttribute("data-dl-current")) downloadCurrent();
   else if (b.hasAttribute("data-upload")) uploadCurrent("");
   else if (b.hasAttribute("data-edit-pi")) editPI();
-  else if (b.hasAttribute("data-open-final")) openDoc("INV", VIEW.prop, VIEW.finalNo);
+  else if (b.hasAttribute("data-open-final")) openDoc(/N\/A$/.test(VIEW.finalNo) ? "B2C" : "INV", VIEW.prop, VIEW.finalNo);
   else if (b.hasAttribute("data-make-cn")){ S = cnFrom(VIEW); MODE = "CN"; VIEW = null; EDITING = null; renderForm(); ensureNext(); }
   else if (b.hasAttribute("data-clear")){ ask("Clear the form?", "Everything you've typed will be removed.", "Clear").then(ok => { if (ok){ S = freshData(S.prop); renderForm(); } }); }
   else if (b.hasAttribute("data-close")){
